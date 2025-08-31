@@ -1,0 +1,59 @@
+# Benchmark Results and Temporary Files
+benchmark_results_*/
+*.prof
+*_profiling_*.txt
+detailed_profile_analysis.txt
+
+# Animation and Output Images (local generation)
+# These folders will be added to GitHub manually but ignored for local sync
+python/animation/
+python/animation_galaxy/
+julia/animation/
+julia/animation_galaxy/
+matlab/animation/
+matlab/animation_galaxy/
+
+# Individual output images (generated locally)
+python/*.png
+julia/*.png
+matlab/*.png
+
+# Video files (large and generated)
+*.mp4
+
+# Archive folder (development artifacts)
+archive/
+
+# Python cache and temporary files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+.pytest_cache/
+
+# MATLAB temporary files
+*.asv
+*.m~
+
+# Julia temporary files
+*.jl.cov
+*.jl.*.cov
+*.jl.mem
+
+# System files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# IDE files
+.vscode/settings.json
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Log files
+*.log
