@@ -49,8 +49,53 @@ function lbm_cylinder_opt()
 % - Expected speedup: 3-6x over original version
 % - For maximum performance: launch MATLAB with -singleCompThread for fairness
 % - For maximum performance: ensure MATLAB is compiled with optimized BLAS/LAPACK
-%
+
+%% =============================================================================
+% CONFIGURATION SECTION
 % =============================================================================
+
+% Fluid domain dimensions
+MAX_X = 400;
+MAX_Y = 100;
+
+% D2Q9 lattice model parameters
+% 9 velocity directions: center (1), cardinal directions (2-5), diagonal directions (6-9)
+LATTICE_NUM = 9;
+CX = [0  1  0 -1  0  1 -1 -1  1];      % x-velocity components
+CY = [0  0  1  0 -1  1  1 -1 -1];     % y-velocity components
+% OPTIMIZATION: Use single for better memory bandwidth
+WEIGHTS = single([4/9  1/9  1/9  1/9  1/9  1/36  1/36  1/36  1/36]);  % lattice weights
+
+% Opposite direction indices for bounce-back boundary conditions
+% Note: MATLAB uses 1-based indexing, so we convert from Python's 0-based OPP
+% Python OPP (0-based): [0,3,4,1,2,7,8,5,6] -> MATLAB (1-based): [1,4,5,2,3,8,9,6,7]
+OPP = [1 4 5 2 3 8 9 6 7];
+
+% Cylinder geometry and position
+POSITION_OX = 70;    % x-coordinate of cylinder center
+POSITION_OY = 50;    % y-coordinate of cylinder center
+RADIUS = 20;         % cylinder radius
+
+% Fluid properties and Reynolds number
+REYNOLDS = 200;      % Reynolds number for the flow
+% OPTIMIZATION: Use single for better memory bandwidth
+U_MAX = single(0.1);         % maximum inlet velocity
+kinematic_viscosity = single(U_MAX * 2 * RADIUS / REYNOLDS);
+relaxation_time = single(3.0) * kinematic_viscosity + single(0.5);
+
+% Simulation control parameters
+MAX_STEP = 20001;    % total number of time steps
+OUTPUT_STEP = 2000;  % frequency of output visualization
+PICTURE_NUM = 1;     % counter for saved images
+
+% Visualization control flags
+% Set to false for performance benchmarking (no visualization or file I/O)
+% Set to true for normal operation with visualization and output
+VISUALIZE = true;
+% Set to true for clean images without ticks, labels, title (publication mode)
+NOTICKS = false;
+
+%% =============================================================================
 % MAIN SIMULATION FUNCTION
 % =============================================================================
 %
@@ -73,11 +118,6 @@ function lbm_cylinder_opt()
 % - Optimized macroscopic variable computation
 % - Buffer reuse to avoid step-wise allocations
 % - 2D arrays instead of 3D arrays for better cache locality
-
-    % -- Initialize all parameters
-    [MAX_X, MAX_Y, LATTICE_NUM, CX, CY, WEIGHTS, OPP, ...
-     POSITION_OX, POSITION_OY, RADIUS, REYNOLDS, U_MAX, ...
-     kinematic_viscosity, relaxation_time, MAX_STEP, OUTPUT_STEP, PICTURE_NUM, VISUALIZE, NOTICKS] = initialize_parameters();
 
     % -- Print simulation parameters for user reference
     fprintf('Reynolds number = %g\n', REYNOLDS);
@@ -178,65 +218,7 @@ end
 % LOCAL FUNCTIONS
 % =============================================================================
 
-function [MAX_X, MAX_Y, LATTICE_NUM, CX, CY, WEIGHTS, OPP, ...
-          POSITION_OX, POSITION_OY, RADIUS, REYNOLDS, U_MAX, ...
-          kinematic_viscosity, relaxation_time, MAX_STEP, OUTPUT_STEP, PICTURE_NUM, VISUALIZE, NOTICKS] = initialize_parameters()
-% =============================================================================
-% PARAMETER INITIALIZATION
-% =============================================================================
-%
-% Initialize all simulation parameters including domain size, lattice properties,
-% cylinder geometry, and fluid properties.
-%
-% This function sets up all the constants needed for the LBM simulation:
-% - Computational domain dimensions
-% - D2Q9 lattice model parameters (velocity directions, weights, opposite indices)
-% - Cylinder geometry and position
-% - Fluid properties and Reynolds number
-% - Simulation control parameters
-% - Visualization control flag
 
-    % Fluid domain dimensions
-    MAX_X = 400;
-    MAX_Y = 100;
-
-    % D2Q9 lattice model parameters
-    % 9 velocity directions: center (1), cardinal directions (2-5), diagonal directions (6-9)
-    LATTICE_NUM = 9;
-    CX = [0  1  0 -1  0  1 -1 -1  1];      % x-velocity components
-    CY = [0  0  1  0 -1  1  1 -1 -1];     % y-velocity components
-    % OPTIMIZATION: Use single for better memory bandwidth
-    WEIGHTS = single([4/9  1/9  1/9  1/9  1/9  1/36  1/36  1/36  1/36]);  % lattice weights
-
-    % Opposite direction indices for bounce-back boundary conditions
-    % Note: MATLAB uses 1-based indexing, so we convert from Python's 0-based OPP
-    % Python OPP (0-based): [0,3,4,1,2,7,8,5,6] -> MATLAB (1-based): [1,4,5,2,3,8,9,6,7]
-    OPP = [1 4 5 2 3 8 9 6 7];
-
-    % Cylinder geometry and position
-    POSITION_OX = 70;    % x-coordinate of cylinder center
-    POSITION_OY = 50;    % y-coordinate of cylinder center
-    RADIUS = 20;         % cylinder radius
-
-    % Fluid properties and Reynolds number
-    REYNOLDS = 200;      % Reynolds number for the flow
-    % OPTIMIZATION: Use single for better memory bandwidth
-    U_MAX = single(0.1);         % maximum inlet velocity
-    kinematic_viscosity = single(U_MAX * 2 * RADIUS / REYNOLDS);
-    relaxation_time = single(3.0) * kinematic_viscosity + single(0.5);
-
-    % Simulation control parameters
-    MAX_STEP = 20001;    % total number of time steps
-    OUTPUT_STEP = 2000;  % frequency of output visualization
-    PICTURE_NUM = 1;     % counter for saved images
-    
-    % Visualization control flags
-    % Set to false for performance benchmarking (no visualization or file I/O)
-    % Set to true for normal operation with visualization and output
-    VISUALIZE = true;
-    % Set to true for clean images without ticks, labels, title (publication mode)
-    NOTICKS = false;
-end
 
 function cylinder = create_cylinder_mask(MAX_X, MAX_Y, POSITION_OX, POSITION_OY, RADIUS)
 % =============================================================================
