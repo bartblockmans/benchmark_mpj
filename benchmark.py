@@ -742,7 +742,7 @@ class Benchmarker:
                         break
         
         # Check if we hit the maximum attempts limit
-        if total_runs >= max_attempts:
+        if total_runs >= max_attempts and self.benchmark_mode == 'outlier_detection':
             print(f"  ⚠️  Warning: Maximum attempts ({max_attempts}) reached. Using available runs.")
             print(f"     This may indicate that outlier detection is too strict for your data.")
         
@@ -1163,10 +1163,9 @@ def main():
     # Ask about benchmark mode
     print(f"\nBenchmark Mode Selection:")
     print("   Choose one of the following approaches:")
-    print("   1. No outlier detection - keeps all runs (useful for debugging)")
-    print("   2. Outlier detection - finds consistent subset or most consistent subset")
+    print(f"   1. No outlier detection - keeps all {N_RUNS} runs")
+    print(f"   2. Outlier detection - finds consistent subset of {N_RUNS} runs")
     print(f"   3. Best {N_RUNS} out of {N_MAX} - selects {N_RUNS} fastest runs from {N_MAX} total runs")
-    print("   - Recommended: Option 2 for most benchmarking scenarios")
     
     while True:
         try:
