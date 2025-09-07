@@ -82,7 +82,7 @@ PICTURE_NUM = 1;     % counter for saved images
 % Visualization control flags
 % Set to false for performance benchmarking (no visualization or file I/O)
 % Set to true for normal operation with visualization and output
-VISUALIZE = false;
+VISUALIZE = true;
 
 % Clean visualization parameter: removes ticks, labels, title and minimizes margins
 % Set to true for clean, publication-ready images without visual clutter

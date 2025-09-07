@@ -91,7 +91,8 @@ PICTURE_NUM = 1;     % counter for saved images
 % Visualization control flags
 % Set to false for performance benchmarking (no visualization or file I/O)
 % Set to true for normal operation with visualization and output
-VISUALIZE = true;
+VISUALIZE = false;
+
 % Set to true for clean images without ticks, labels, title (publication mode)
 NOTICKS = false;
 
@@ -378,19 +379,28 @@ function [F0, F1, F2, F3, F4, F5, F6, F7, F8] = handle_cylinder_boundary_masks_2
 % - Using precomputed masks to identify incoming particles
 % - Reversing their velocity direction (bounce-back)
 % - Maintaining mass conservation at the boundary
+%
+% FIXED: Read from unmodified snapshot to avoid read-after-write hazard
 
-    % Create array of distribution functions for easy indexing
-    F_array = {F0, F1, F2, F3, F4, F5, F6, F7, F8};
-    
+    % Snapshot of post-stream field (sources) — DO NOT modify these:
+    Fsrc = {F0, F1, F2, F3, F4, F5, F6, F7, F8};
+
+    % Destination starts as a shallow copy of the snapshot (copy-on-write).
+    Fbb  = Fsrc;
+
+    % Write at SOLID cells, exactly like the baseline:
+    % Fi(solid & incoming) = Fopp_from_snapshot(same mask)
     for i = 2:numel(OPP)
         m = incoming_masks{i};
-        F_array{i}(m) = F_array{OPP(i)}(m);
+        Fi   = Fbb{i};                  % copy-on-write happens here on first write
+        Fopp = Fsrc{OPP(i)};            % read from the immutable snapshot
+        Fi(m) = Fopp(m);
+        Fbb{i} = Fi;
     end
-    
-    % Extract back to individual variables
-    F0 = F_array{1}; F1 = F_array{2}; F2 = F_array{3}; F3 = F_array{4};
-    F4 = F_array{5}; F5 = F_array{6}; F6 = F_array{7}; F7 = F_array{8};
-    F8 = F_array{9};
+
+    % Unpack
+    F0=Fbb{1}; F1=Fbb{2}; F2=Fbb{3}; F3=Fbb{4}; F4=Fbb{5};
+    F5=Fbb{6}; F6=Fbb{7}; F7=Fbb{8}; F8=Fbb{9};
 end
 
 function [rho, ux, uy] = compute_macroscopic_variables_2d(F0, F1, F2, F3, F4, F5, F6, F7, F8, cylinder, CX, CY)

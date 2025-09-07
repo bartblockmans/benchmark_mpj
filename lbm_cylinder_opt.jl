@@ -75,8 +75,7 @@ function initialize_parameters()
     LATTICE_NUM = 9
     CX = [0, 1, 0, -1, 0, 1, -1, -1, 1]      # x-velocity components
     CY = [0, 0, 1,  0, -1, 1,  1, -1,-1]     # y-velocity components
-    # OPTIMIZATION: Use Float32 for better memory bandwidth
-    WEIGHTS = Float32[4/9, 1/9, 1/9, 1/9, 1/9, 1/36, 1/36, 1/36, 1/36]  # lattice weights
+    WEIGHTS = [4/9, 1/9, 1/9, 1/9, 1/9, 1/36, 1/36, 1/36, 1/36]  # lattice weights
     
     # Opposite direction indices for bounce-back boundary conditions
     # Note: Julia uses 1-based indexing, so we convert from Python's 0-based OPP
@@ -90,10 +89,9 @@ function initialize_parameters()
 
     # Fluid properties and Reynolds number
     REYNOLDS = 200      # Reynolds number for the flow
-    # OPTIMIZATION: Use Float32 for better memory bandwidth
-    U_MAX    = 0.1f0   # maximum inlet velocity
-    kinematic_viscosity = U_MAX * (2f0 * RADIUS) / REYNOLDS
-    relaxation_time     = 3f0 * kinematic_viscosity + 0.5f0
+    U_MAX    = 0.1      # maximum inlet velocity
+    kinematic_viscosity = U_MAX * 2 * RADIUS / REYNOLDS
+    relaxation_time     = 3.0 * kinematic_viscosity + 0.5
 
     # Simulation control parameters
     MAX_STEP    = 20001    # total number of time steps
@@ -103,8 +101,10 @@ function initialize_parameters()
     # Visualization control flags
     # Set to false for performance benchmarking (no visualization or file I/O)
     # Set to true for normal operation with visualization and output
-    VISUALIZE = true
-    # Set to true for clean images without ticks, labels, title (animation mode)
+    VISUALIZE = false
+    
+    # Clean visualization parameter: removes ticks, labels, title and minimizes margins
+    # Set to true for clean, publication-ready images without visual clutter
     NOTICKS = false
 
     # Return all parameters as a NamedTuple for clean access
@@ -141,11 +141,13 @@ function initialize_flow_field(MAX_Y, MAX_X, LATTICE_NUM, U_MAX, CX, CY, WEIGHTS
     - Velocity is zero except at inlet/outlet boundaries
     - Distribution functions are set to equilibrium values
     """
+    # Use Float32 for better performance and memory bandwidth
+    T = Float32
+    
     # Initialize density and velocity fields
-    # OPTIMIZATION: Use Float32 for better memory bandwidth
-    rho = ones(Float32, MAX_Y, MAX_X)           # uniform density field
-    ux  = zeros(Float32, MAX_Y, MAX_X)         # zero velocity initially
-    uy  = zeros(Float32, MAX_Y, MAX_X)         # zero velocity initially
+    rho = ones(T, MAX_Y, MAX_X)           # uniform density field
+    ux  = zeros(T, MAX_Y, MAX_X)         # zero velocity initially
+    uy  = zeros(T, MAX_Y, MAX_X)         # zero velocity initially
     
     # Set inlet and outlet velocities (left and right boundaries)
     ux[:, 1]   .= U_MAX    # left boundary (inlet)
@@ -153,8 +155,7 @@ function initialize_flow_field(MAX_Y, MAX_X, LATTICE_NUM, U_MAX, CX, CY, WEIGHTS
 
     # Initialize distribution functions F using equilibrium distribution
     # This sets up the initial particle populations for each velocity direction
-    # OPTIMIZATION: Use Float32 for better memory bandwidth
-    F = zeros(Float32, MAX_Y, MAX_X, LATTICE_NUM)
+    F = zeros(T, MAX_Y, MAX_X, LATTICE_NUM)
     for i in 1:LATTICE_NUM
         cx = CX[i]; cy = CY[i]; w = WEIGHTS[i]
         cu = cx .* ux .+ cy .* uy  # velocity component in this direction
@@ -201,10 +202,10 @@ function precompute_streaming_indices(MAX_X, MAX_Y, CX, CY)
     for i in 1:length(CX)
         for x in 1:MAX_X
             # index of the cell that streams into (y, x) along dir i
-            x_from[i][x] = 1 + mod(x - CX[i] - 1, MAX_X)
+            x_from[i][x] = 1 + mod(x - 1 - CX[i], MAX_X)
         end
         for y in 1:MAX_Y
-            y_from[i][y] = 1 + mod(y - CY[i] - 1, MAX_Y)
+            y_from[i][y] = 1 + mod(y - 1 - CY[i], MAX_Y)
         end
     end
     
@@ -225,44 +226,32 @@ end
     return nothing
 end
 
-# OPTIMIZATION: Precompute cylinder masks for bounce-back
-function precompute_cylinder_masks(cylinder, CX, CY)
+# ORIGINAL bounce-back semantics (solid-cell write with AND-mask)
+function precompute_incoming_masks_original(cylinder, CX, CY)
     """
-    Precompute incoming particle masks for bounce-back boundary conditions.
-    These masks don't change during simulation, so compute once and reuse.
+    Precompute the ORIGINAL masks exactly as in the old code.
     """
-    incoming_masks = Vector{BitMatrix}(undef, length(CX))
-    incoming_masks[1] = falses(size(cylinder))  # unused for i=1 (rest particle)
-    
-    for i in 2:length(CX)
+    masks = Vector{BitMatrix}(undef, length(CX))
+    masks[1] = falses(size(cylinder))
+    @inbounds for i in 2:length(CX)
         roll_x = circshift(cylinder, (0, -CX[i]))
         roll_y = circshift(cylinder, (-CY[i], 0))
-        incoming_masks[i] = cylinder .& .!(roll_x .& roll_y)
+        masks[i] = cylinder .& .!(roll_x .& roll_y)
     end
-    
-    return incoming_masks
+    return masks
 end
 
-function handle_cylinder_boundary!(destF, srcF, incoming_masks, OPP)
+# Apply ORIGINAL bounce-back: copy post-stream field, then write at SOLID cells
+function handle_cylinder_boundary_original!(Fpost, masks, OPP)
     """
-    Handle the no-slip boundary condition at the cylinder surface using precomputed masks.
-    
-    Implements the bounce-back method where particles hitting the cylinder
-    reverse their direction. This creates a solid wall effect by:
-    - Using precomputed masks to identify incoming particles
-    - Reversing their velocity direction (bounce-back)
-    - Maintaining mass conservation at the boundary
-    
-    The bounce-back method is a simple and effective way to implement
-    no-slip boundary conditions in LBM simulations.
+    Apply the original bounce-back semantics exactly as in the original code.
     """
+    Fbb = copy(Fpost)  # replicate original 'copy(F)'
     @inbounds for i in 2:length(OPP)
-        mask = incoming_masks[i]
-        @views destFi = destF[:,:,i]
-        @views srcFopp = srcF[:,:,OPP[i]]
-        destFi[mask] .= srcFopp[mask]
+        mask = masks[i]
+        @views view(Fbb, :, :, i)[mask] .= view(Fpost, :, :, OPP[i])[mask]
     end
-    return destF
+    return Fbb
 end
 
 # OPTIMIZATION: Manual reductions for macroscopic variables (faster than sum)
@@ -276,15 +265,20 @@ end
         r  = zero(eltype(rho))
         mx = zero(eltype(ux))
         my = zero(eltype(uy))
-        @fastmath @simd for i in 1:nd
+        for i in 1:nd
             fi = F[y,x,i]
             r  += fi
             mx += fi * CX[i]
             my += fi * CY[i]
         end
         rho[y,x] = r
-        ux[y,x]  = mx / r
-        uy[y,x]  = my / r
+        if r > 1e-10  # safety check to avoid division by zero
+            ux[y,x]  = mx / r
+            uy[y,x]  = my / r
+        else
+            ux[y,x]  = 0.0
+            uy[y,x]  = 0.0
+        end
     end
     ux[cylinder] .= 0
     uy[cylinder] .= 0
@@ -297,20 +291,20 @@ end
     Perform collision step in a single fused loop - compute feq on-the-fly and update F in-place.
     This is the most efficient approach, avoiding temporary allocations.
     """
+    T = eltype(F)
+    tauT   = convert(T, tau)
+    invtau = one(T) / tauT
+    c1=T(1); c3=T(3); c45=T(4.5); c15=T(1.5)
     ny, nx, nd = size(F)
-    invtau = one(eltype(F)) / tau
     
-    @threads for y in 1:ny
+    for y in 1:ny
         @inbounds for x in 1:nx
-            ρ   = rho[y,x]
-            uxi = ux[y,x]; uyi = uy[y,x]
-            @fastmath begin
-                usq = muladd(uxi, uxi, uyi*uyi)   # u^2
-                @simd for i in 1:nd
-                    cu  = CX[i]*uxi + CY[i]*uyi
-                    feq = ρ * W[i] * (1f0 + 3f0*cu + 4.5f0*cu*cu - 1.5f0*usq)
-                    F[y,x,i] += -(invtau) * (F[y,x,i] - feq)
-                end
+            ρ = rho[y,x]; uxi = ux[y,x]; uyi = uy[y,x]
+            usq = uxi*uxi + uyi*uyi
+            for i in 1:nd
+                cu  = CX[i]*uxi + CY[i]*uyi
+                feq = ρ * W[i] * (c1 + c3*cu + c45*cu*cu - c15*usq)
+                F[y,x,i] += -invtau * (F[y,x,i] - feq)
             end
         end
     end
@@ -332,7 +326,7 @@ function collision_step!(F, rho, ux, uy, CX, CY, WEIGHTS, relaxation_time)
     drives the system toward thermodynamic equilibrium.
     """
     # Compute equilibrium distribution functions
-    Feq = zeros(size(F))
+    Feq = zeros(eltype(F), size(F))
     for i in 1:length(CX)
         cx = CX[i]; cy = CY[i]; w = WEIGHTS[i]
         cu = cx .* ux .+ cy .* uy  # velocity component in this direction
@@ -346,7 +340,7 @@ function collision_step!(F, rho, ux, uy, CX, CY, WEIGHTS, relaxation_time)
     return F
 end
 
-function apply_inflow_outflow_boundary_conditions!(F, rho, ux, CX, WEIGHTS, U_MAX)
+function apply_inflow_outflow_boundary_conditions!(F, rho, ux, uy, CX, CY, WEIGHTS, U_MAX)
     """
     Apply velocity boundary conditions at inlet and outlet.
     
@@ -361,18 +355,20 @@ function apply_inflow_outflow_boundary_conditions!(F, rho, ux, CX, WEIGHTS, U_MA
     # Set boundary velocities
     ux[:, 1]   .= U_MAX    # left boundary (inlet)
     ux[:, end] .= U_MAX    # right boundary (outlet)
+    uy[:, 1]   .= 0.0      # ensure zero y-velocity at boundaries
+    uy[:, end] .= 0.0      # ensure zero y-velocity at boundaries
     
     # Update distribution functions at boundaries using equilibrium distribution
     for i in 1:length(CX)
-        cx = CX[i]; w = WEIGHTS[i]
+        cx = CX[i]; cy = CY[i]; w = WEIGHTS[i]
         
         # Inlet boundary (left edge)
-        cuL = cx .* ux[:, 1]
-        F[:, 1,   i] .= rho[:, 1]   .* w .* (1 .+ 3 .* cuL .+ 4.5 .* cuL.^2 .- 1.5 .* (ux[:, 1].^2))
+        cuL = cx .* ux[:, 1] .+ cy .* uy[:, 1]
+        F[:, 1,   i] .= rho[:, 1]   .* w .* (1 .+ 3 .* cuL .+ 4.5 .* cuL.^2 .- 1.5 .* (ux[:, 1].^2 .+ uy[:, 1].^2))
         
         # Outlet boundary (right edge)
-        cuR = cx .* ux[:, end]
-        F[:, end, i] .= rho[:, end] .* w .* (1 .+ 3 .* cuR .+ 4.5 .* cuR.^2 .- 1.5 .* (ux[:, end].^2))
+        cuR = cx .* ux[:, end] .+ cy .* uy[:, end]
+        F[:, end, i] .= rho[:, end] .* w .* (1 .+ 3 .* cuR .+ 4.5 .* cuR.^2 .- 1.5 .* (ux[:, end].^2 .+ uy[:, end].^2))
     end
     
     return F, ux
@@ -390,12 +386,15 @@ function visualize_flow_field(step, ux, uy, cylinder, POSITION_OX, POSITION_OY, 
     - Vorticity field (curl of velocity) using a diverging colormap
     - Streamlines colored by velocity magnitude
     - Cylinder outline for reference
-    - Clear title and proper axis limits
+    - Clear title and proper axis limits (unless NOTICKS is true)
     
     The visualization helps understand the flow physics including:
     - Vortex formation and shedding
     - Flow separation patterns
     - Wake development behind the cylinder
+    
+    When NOTICKS is true, creates clean images without ticks, labels, title,
+    and with minimized margins for publication use.
     """
     # Compute vorticity (discrete curl of velocity field)
     # This measures the local rotation of the fluid
@@ -405,9 +404,22 @@ function visualize_flow_field(step, ux, uy, cylinder, POSITION_OX, POSITION_OY, 
 
     # Create the figure using CairoMakie (Julia's plotting library)
     # Use 'size' (not 'resolution') to avoid Makie deprecation warnings
-    fig = Figure(size = (900, 250))
-    ax  = Axis(fig[1, 1], aspect = DataAspect(),
-                title = "Vorticity and streamlines at step $step")
+    if NOTICKS
+        # Clean layout: minimize margins, no ticks/labels/title
+        fig = Figure(size = (900, 250), figure_padding = (0, 0, 0, 0))
+        ax  = Axis(fig[1, 1], aspect = DataAspect(),
+                   xticksvisible = false, yticksvisible = false, # hide ticks
+                   xlabelvisible = false, ylabelvisible = false, # hide labels
+                   titlevisible = false, # hide title
+                   xticklabelsvisible = false, yticklabelsvisible = false, # hide axis values
+                   leftspinevisible = true, rightspinevisible = true, 
+                   topspinevisible = true, bottomspinevisible = true) # keep border
+    else
+        # Normal layout: standard margins, ticks, labels, title
+        fig = Figure(size = (900, 250))
+        ax  = Axis(fig[1, 1], aspect = DataAspect(),
+                   title = "Vorticity and streamlines at step $step")
+    end
 
     # Bilinear interpolation function for smooth velocity field sampling
     # This provides better streamline visualization by interpolating between grid points
@@ -439,17 +451,17 @@ function visualize_flow_field(step, ux, uy, cylinder, POSITION_OX, POSITION_OY, 
     poly!(ax, Circle(Point2f(Float32(POSITION_OX), Float32(POSITION_OY)), Float32(RADIUS));
              color = :black, strokecolor = :black, strokewidth = 1)
 
-         # Generate streamlines using the vector field function
-     # This shows the flow patterns and direction throughout the domain
-     streamplot!(ax, f, 0..(MAX_X-1), 0..(MAX_Y-1);
-                 color     = v -> hypot(v[1], v[2]),  # color by velocity magnitude
-                 colormap  = :cool,                     # cool colormap for streamlines
-                 linewidth = 0.8,                      # line thickness
-                 density   = 0.35,                     # streamline density (0.25–0.6)
-                 gridsize  = (120, 40),                # sampling resolution
-                 arrow_size = 6)                       # arrowhead size for direction
+    # Generate streamlines using the vector field function
+    # This shows the flow patterns and direction throughout the domain
+    streamplot!(ax, f, 0..(MAX_X-1), 0..(MAX_Y-1);
+                color     = v -> hypot(v[1], v[2]),  # color by velocity magnitude
+                colormap  = :cool,                     # cool colormap for streamlines
+                linewidth = 0.8,                      # line thickness
+                density   = 0.35,                     # streamline density (0.25–0.6)
+                gridsize  = (120, 40),                # sampling resolution
+                arrow_size = 6)                       # arrowhead size for direction
 
-     # Set axis limits to match the computational domain
+    # Set axis limits to match the computational domain
     xlims!(ax, 0, MAX_X-1); ylims!(ax, 0, MAX_Y-1)
 
     # Create output directory and save the figure
@@ -499,14 +511,15 @@ function main()
     @info "Threads available: $(nthreads())"
     if p.VISUALIZE
         @info "Output directory = julia/"
+        @info "Clean visualization (NOTICKS) = $(p.NOTICKS)"
     end
 
     # Create cylinder mask (defines where the solid cylinder is located)
     cylinder = create_cylinder_mask(p.MAX_X, p.MAX_Y, p.POSITION_OX, p.POSITION_OY, p.RADIUS)
     
-    # OPTIMIZATION: Precompute cylinder masks and streaming indices
-    incoming_masks = precompute_cylinder_masks(cylinder, p.CX, p.CY)
+    # OPTIMIZATION: Precompute streaming indices and original cylinder masks
     x_from, y_from = precompute_streaming_indices(p.MAX_X, p.MAX_Y, p.CX, p.CY)
+    incoming_masks_original = precompute_incoming_masks_original(cylinder, p.CX, p.CY)
     
     # OPTIMIZATION: Convert arrays to tuples for better performance
     CX_tuple = Tuple(p.CX)
@@ -519,8 +532,6 @@ function main()
 
     # OPTIMIZATION: Preallocate buffers for reuse
     G = similar(F)      # Second buffer for ping-pong streaming
-    F2 = similar(F)     # Second buffer for cylinder boundary handling
-    Feq = similar(F)    # Buffer for equilibrium distribution (if needed)
 
     # Main simulation loop - each iteration represents one time step
     @info "Starting simulation for $(p.MAX_STEP) steps..."
@@ -533,20 +544,16 @@ function main()
 
         # LBM Algorithm Steps (executed in sequence each time step):
         
-        # 1. Apply periodic boundary conditions
+        # 0. Apply periodic boundary conditions (match original exactly)
         #    Particles leaving one edge re-enter from the opposite edge
         apply_periodic_boundary_conditions!(F)
         
-        # 2. OPTIMIZED Streaming step: use ping-pong buffers and precomputed indices
+        # 1. OPTIMIZED Streaming step: use ping-pong buffers and precomputed indices
         #    This avoids circshift allocations and provides linear memory access
         streaming_step!(G, F, x_from, y_from)
-        F, G = G, F  # swap buffers
         
-        # 3. OPTIMIZED Handle cylinder boundary using precomputed masks
-        #    Copy to buffer and modify in-place to avoid allocations
-        copyto!(F2, F)
-        handle_cylinder_boundary!(F2, F, incoming_masks, OPP_tuple)
-        F = F2
+        # 2. ORIGINAL wall handling (acts on SOLID cells, reading from G)
+        F = handle_cylinder_boundary_original!(G, incoming_masks_original, OPP_tuple)
 
         # 4. OPTIMIZED Compute macroscopic variables using manual reductions
         #    This is faster than sum/dropdims and avoids temporary allocations
@@ -558,7 +565,7 @@ function main()
         
         # 6. Apply inlet/outlet boundary conditions
         #    Maintains constant velocity at domain boundaries
-        F, ux = apply_inflow_outflow_boundary_conditions!(F, rho, ux, p.CX, p.WEIGHTS, p.U_MAX)
+        F, ux = apply_inflow_outflow_boundary_conditions!(F, rho, ux, uy, p.CX, p.CY, p.WEIGHTS, p.U_MAX)
 
         # 7. Visualization and output (every OUTPUT_STEP iterations, only if enabled)
         #    Generates plots showing vorticity and streamlines
