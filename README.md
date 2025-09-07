@@ -78,6 +78,71 @@ This repository contains performance benchmarking implementations of two computa
    - Right-click in editor → "Run Current Section" to execute code blocks
    - Use `%%` to create code sections for interactive execution
 
+### C and Fortran Setup
+
+The repository includes C and Fortran implementations for additional performance comparison. These require compilation before execution.
+
+#### Prerequisites
+
+1. **C Compiler**:
+   - **Windows**: Install [MinGW-w64](https://www.mingw-w64.org/) or [Microsoft Visual Studio Build Tools](https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022)
+   - **Linux/macOS**: Install GCC (`sudo apt install gcc` on Ubuntu, `brew install gcc` on macOS)
+
+2. **Fortran Compiler**:
+   - **Windows**: Install [MinGW-w64 with Fortran](https://www.mingw-w64.org/) or [Intel Fortran Compiler](https://www.intel.com/content/www/us/en/developer/tools/oneapi/fortran-compiler.html)
+   - **Linux**: Install GFortran (`sudo apt install gfortran` on Ubuntu)
+   - **macOS**: Install GFortran (`brew install gfortran`)
+
+3. **Build Tools**:
+   - **CMake**: Download from [cmake.org](https://cmake.org/download/) (version 3.10+)
+   - **Ninja** (optional): Download from [ninja-build.org](https://ninja-build.org/) for faster builds
+
+#### Compilation and Execution
+
+**C Implementations**:
+```bash
+# Navigate to C code directory
+cd C_lbm/          # or C_nbody/
+
+# Create build directory
+mkdir build && cd build
+
+# Configure with CMake
+cmake .. -G "MinGW Makefiles"    # Windows with MinGW
+# or
+cmake .. -G "Unix Makefiles"     # Linux/macOS
+
+# Compile
+cmake --build .
+
+# Run the executable
+./lbm_cylinder_c.exe             # Windows
+./lbm_cylinder_c                 # Linux/macOS
+```
+
+**Fortran Implementations**:
+```bash
+# Navigate to Fortran code directory  
+cd fortran_lbm/    # or fortran_nbody/
+
+# Create build directory
+mkdir build && cd build
+
+# Configure with CMake
+cmake .. -G "MinGW Makefiles"    # Windows with MinGW
+# or  
+cmake .. -G "Unix Makefiles"     # Linux/macOS
+
+# Compile
+cmake --build .
+
+# Run the executable
+./lbm_cylinder_fortran.exe       # Windows
+./lbm_cylinder_fortran           # Linux/macOS
+```
+
+**Note**: The C and Fortran implementations generate visualization images in their respective `images/` folders. These images are included in the repository for reference but are not synced in future commits.
+
 ## 📋 Requirements
 
 ### Python Requirements
